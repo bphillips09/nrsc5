@@ -2,6 +2,9 @@ add_compile_options (--std=gnu11 -O3 -Wall -Wextra)
 
 add_definitions (-D_GNU_SOURCE)
 set (THREAD_LIBRARY pthread)
+if (CMAKE_SYSTEM_NAME MATCHES Android)
+    set (THREAD_LIBRARY "")
+endif()
 if (CMAKE_SYSTEM_NAME MATCHES Linux)
     set (EXPORTS_LINKER_FLAGS "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/libnrsc5.map")
 elseif (CMAKE_SYSTEM_NAME MATCHES Darwin)
@@ -80,6 +83,9 @@ endif ()
 set_target_properties(nrsc5 PROPERTIES PUBLIC_HEADER "../include/nrsc5.h")
 set_target_properties(nrsc5 PROPERTIES LINK_FLAGS "${STATIC_LINKER_FLAGS} ${EXPORTS_LINKER_FLAGS}")
 target_compile_definitions(nrsc5 PUBLIC "-DNRSC5_EXPORTS=1")
+if (NOT ENABLE_RTLSDR_DEVICE)
+    target_compile_definitions(nrsc5 PRIVATE NRSC5_NO_RTLSDR=1)
+endif()
 
 add_library (
     nrsc5_static
@@ -92,6 +98,9 @@ target_link_libraries (
 if (BUILTIN_LIBRARIES)
     add_dependencies(nrsc5_static ${BUILTIN_LIBRARIES})
 endif ()
+if (NOT ENABLE_RTLSDR_DEVICE)
+    target_compile_definitions(nrsc5_static PRIVATE NRSC5_NO_RTLSDR=1)
+endif()
 
 if (BUILD_CLI)
     add_executable (
@@ -108,6 +117,12 @@ if (BUILD_CLI)
         ${THREAD_LIBRARY}
         ${SOCKET_LIBRARY}
     )
+    if (NOT CLI_AUDIO_OUTPUT)
+        target_compile_definitions(app PRIVATE NRSC5_NO_AO=1)
+    endif ()
+    if (NOT ENABLE_RTLSDR_DEVICE)
+        target_compile_definitions(app PRIVATE NRSC5_NO_RTLSDR=1)
+    endif ()
     install (
             TARGETS app
             RUNTIME DESTINATION bin

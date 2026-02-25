@@ -1,8 +1,12 @@
 #pragma once
 
 #include <pthread.h>
-#include <rtl-sdr.h>
 #include <stdio.h>
+#ifndef NRSC5_NO_RTLSDR
+#include <rtl-sdr.h>
+#else
+typedef struct rtlsdr_dev rtlsdr_dev_t;
+#endif
 
 #include <nrsc5.h>
 

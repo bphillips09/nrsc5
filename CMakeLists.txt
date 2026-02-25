@@ -16,9 +16,22 @@ option (USE_SYSTEM_FFTW "Use system provided fftw" ON)
 option (USE_SYSTEM_RTLSDR "Use system provided rtl-sdr" ON)
 option (USE_SYSTEM_LIBUSB "Use system provided libusb" ON)
 option (USE_SYSTEM_LIBAO "Use system provided libao" ON)
+option (ENABLE_RTLSDR_DEVICE "Enable direct RTL-SDR USB device backend" ON)
 option (INSTALLED_FAAD_IS_PATCHED "Use patched system-provided FAAD2" OFF)
 option (BUILD_DOC "Build API documentation" OFF)
 option (BUILD_CLI "Build nrsc5 executable" ON)
+option (CLI_AUDIO_OUTPUT "Enable libao audio output in CLI" ON)
+
+if (CMAKE_SYSTEM_NAME MATCHES Android)
+    # Android CLI runs in headless mode for app integration.
+    set (CLI_AUDIO_OUTPUT OFF CACHE BOOL "Enable libao audio output in CLI" FORCE)
+    set (ENABLE_RTLSDR_DEVICE OFF CACHE BOOL "Enable direct RTL-SDR USB device backend" FORCE)
+endif()
+
+if (NOT ENABLE_RTLSDR_DEVICE)
+    set (USE_SYSTEM_RTLSDR OFF)
+    set (USE_SYSTEM_LIBUSB OFF)
+endif()
 
 set (FAAD2_CMAKE_ARGS "" CACHE STRING "Extra arguments for FAAD2 cmake command")
 set (LIBRARY_DEBUG_LEVEL "5" CACHE STRING "Debug logging level for libnrsc5: 1=debug, 2=info, 3=warn, 4=error, 5=none")
@@ -57,7 +70,7 @@ if (USE_SYSTEM_FFTW)
         set (USE_SYSTEM_FFTW OFF)
     endif ()
 endif ()
-if (USE_SYSTEM_RTLSDR)
+if (ENABLE_RTLSDR_DEVICE AND USE_SYSTEM_RTLSDR)
     find_library (RTL_SDR_LIBRARIES rtlsdr)
     pkg_search_module (RTL_SDR librtlsdr)
     if (NOT RTL_SDR_LIBRARIES)
@@ -65,7 +78,7 @@ if (USE_SYSTEM_RTLSDR)
         set (USE_SYSTEM_RTLSDR OFF)
     endif ()
 endif ()
-if (USE_SYSTEM_LIBUSB)
+if (ENABLE_RTLSDR_DEVICE AND USE_SYSTEM_LIBUSB)
     find_library (LIBUSB_LIBRARIES usb-1.0)
     pkg_search_module (LIBUSB libusb-1.0)
     if (NOT LIBUSB_LIBRARIES)
@@ -73,7 +86,7 @@ if (USE_SYSTEM_LIBUSB)
         set (USE_SYSTEM_LIBUSB OFF)
     endif ()
 endif ()
-if (BUILD_CLI AND USE_SYSTEM_LIBAO)
+if (BUILD_CLI AND CLI_AUDIO_OUTPUT AND USE_SYSTEM_LIBAO)
     find_library (AO_LIBRARIES ao)
     pkg_search_module(AO ao)
     if (NOT AO_LIBRARIES)
@@ -104,13 +117,18 @@ check_symbol_exists (_Complex_I complex.h HAVE_COMPLEX_I)
 
 if (NOT USE_SYSTEM_FFTW)
     set (FFTW_PREFIX "${CMAKE_BINARY_DIR}/fftw-prefix")
+    set (FFTW_CONFIGURE_FLAGS "--enable-float --enable-static --disable-shared --enable-sse2 --enable-avx --enable-avx2 --with-our-malloc")
+    if (CMAKE_SYSTEM_NAME MATCHES Android)
+        # Android toolchains and static->shared linking require PIC, and x86 SIMD flags are invalid on arm.
+        set (FFTW_CONFIGURE_FLAGS "--enable-float --enable-static --disable-shared --with-our-malloc --with-pic")
+    endif()
     ExternalProject_Add (
         fftw_external
         URL "https://www.fftw.org/fftw-3.3.10.tar.gz"
         URL_HASH SHA256=56c932549852cddcfafdab3820b0200c7742675be92179e59e6215b340e26467
         PREFIX ${FFTW_PREFIX}
 
-        CONFIGURE_COMMAND ${FFTW_PREFIX}/src/fftw_external/configure ${HOST_TRIPLE_ARG} --prefix=${FFTW_PREFIX} --enable-float --enable-static --disable-shared --enable-sse2 --enable-avx --enable-avx2 --with-our-malloc
+        CONFIGURE_COMMAND ${FFTW_PREFIX}/src/fftw_external/configure ${HOST_TRIPLE_ARG} --prefix=${FFTW_PREFIX} ${FFTW_CONFIGURE_FLAGS}
     )
 
     add_library (fftw3f STATIC IMPORTED)
@@ -122,8 +140,12 @@ if (NOT USE_SYSTEM_FFTW)
     set (FFTW3F_BUILTIN fftw3f)
 endif ()
 
-if (NOT USE_SYSTEM_LIBUSB)
+if (ENABLE_RTLSDR_DEVICE AND NOT USE_SYSTEM_LIBUSB)
     set (LIBUSB_PREFIX "${CMAKE_BINARY_DIR}/libusb-prefix")
+    set (LIBUSB_CONFIGURE_FLAGS "")
+    if (CMAKE_SYSTEM_NAME MATCHES Android)
+        set (LIBUSB_CONFIGURE_FLAGS "--disable-udev --disable-linux-netlink")
+    endif()
     ExternalProject_Add (
         libusb_external
         TIMEOUT 120
@@ -132,7 +154,7 @@ if (NOT USE_SYSTEM_LIBUSB)
         PREFIX ${LIBUSB_PREFIX}
 
         UPDATE_COMMAND ""
-        CONFIGURE_COMMAND ${LIBUSB_PREFIX}/src/libusb_external/configure ${HOST_TRIPLE_ARG} --prefix=${LIBUSB_PREFIX}
+        CONFIGURE_COMMAND ${LIBUSB_PREFIX}/src/libusb_external/configure ${HOST_TRIPLE_ARG} --prefix=${LIBUSB_PREFIX} ${LIBUSB_CONFIGURE_FLAGS}
     )
     ExternalProject_Add_Step (
         libusb_external
@@ -152,7 +174,7 @@ if (NOT USE_SYSTEM_LIBUSB)
     )
 endif ()
 
-if (NOT USE_SYSTEM_RTLSDR)
+if (ENABLE_RTLSDR_DEVICE AND NOT USE_SYSTEM_RTLSDR)
     set (RTLSDR_PREFIX "${CMAKE_BINARY_DIR}/rtlsdr-prefix")
     ExternalProject_Add (
         rtlsdr_external
@@ -183,7 +205,14 @@ if (NOT USE_SYSTEM_RTLSDR)
     set (RTL_SDR_BUILTIN rtlsdr)
 endif ()
 
-if (BUILD_CLI AND NOT USE_SYSTEM_LIBAO)
+if (NOT ENABLE_RTLSDR_DEVICE)
+    unset (RTL_SDR_INCLUDE_DIRS)
+    unset (RTL_SDR_LIBRARIES)
+    unset (RTL_SDR_BUILTIN)
+    unset (LIBUSB_BUILTIN)
+endif()
+
+if (BUILD_CLI AND CLI_AUDIO_OUTPUT AND NOT USE_SYSTEM_LIBAO)
     if (NOT WIN32)
         message (FATAL_ERROR "Built-in libao only supported on Windows.")
     endif ()
@@ -273,6 +302,12 @@ if (USE_FAAD2)
     endif()
 else ()
     # we only use libao with faad2
+    unset (AO_INCLUDE_DIRS)
+    unset (AO_LIBRARIES)
+    unset (AO_BUILTIN)
+endif()
+
+if (BUILD_CLI AND NOT CLI_AUDIO_OUTPUT)
     unset (AO_INCLUDE_DIRS)
     unset (AO_LIBRARIES)
     unset (AO_BUILTIN)
